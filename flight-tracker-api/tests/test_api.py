@@ -42,6 +42,22 @@ def test_stats_only_count_past_flights(client):
     assert s19["summary"]["flights"] == 2 and len(s19["by_year"]) == 2                # chips still show every year
     assert len(client.get(f"/api/logbooks/{lb}/legs", headers=h).json()) == 4         # but the list includes the future trip
 
+def test_layovers_vs_round_trips(client):
+    h, lb = signup(client, "layover@example.com")
+    # a same-day round trip (there and back) is not a layover -- both legs' dests are real,
+    # non-layover arrivals (CLE outbound, home BOS on the way back), so both count as "places"
+    for d, o, t in [("2021-01-01", "BOS", "CLE"), ("2021-01-01", "CLE", "BOS")]:
+        assert client.post(f"/api/logbooks/{lb}/legs", json={"flight_date": d, "origin": o, "dest": t}, headers=h).status_code == 201
+    s = client.get(f"/api/logbooks/{lb}/stats", headers=h).json()["summary"]
+    assert s["places"] == 2 and s["countries"] == 1 and s["layovers"] == 0
+
+    # a same-day connection onward to a third city is a layover -- JFK wasn't really visited
+    for d, o, t in [("2021-02-01", "BOS", "JFK"), ("2021-02-01", "JFK", "LHR")]:
+        assert client.post(f"/api/logbooks/{lb}/legs", json={"flight_date": d, "origin": o, "dest": t}, headers=h).status_code == 201
+    s = client.get(f"/api/logbooks/{lb}/stats", headers=h).json()["summary"]
+    assert s["places"] == 3 and s["countries"] == 2 and s["layovers"] == 1
+    assert "JFK" not in [a["iata"] for a in client.get(f"/api/logbooks/{lb}/stats", headers=h).json()["top_airports"]]
+
 def test_sharing_and_isolation(client):
     ha, lb = signup(client, "owner@example.com", "Owner")
     hp, _ = signup(client, "partner@example.com", "Partner")

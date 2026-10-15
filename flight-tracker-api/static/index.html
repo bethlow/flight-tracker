@@ -2,29 +2,29 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Our Travels</title>
+<link rel="stylesheet" href="/theme.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-:root{--bg:#f4f6fa;--card:#fff;--ink:#12151c;--mute:#6b7385;--line:#e3e7ef;--acc:#2f6bff}
-@media(prefers-color-scheme:dark){:root{--bg:#0b0e14;--card:#151a24;--ink:#f1f4fa;--mute:#8b94a8;--line:#232a38;--acc:#5b8cff}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 main{max-width:760px;margin:0 auto;padding:18px 16px 40px}
-h1{font-size:24px;margin:0}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute);margin:0 0 8px}
-.sub{color:var(--mute);font-size:13px}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:14px}
+.card{margin-bottom:14px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute);margin:0 0 8px}
 input,button,select{font:inherit;border-radius:10px;border:1px solid var(--line);padding:9px;background:var(--bg);color:var(--ink);min-width:0}
-button{background:var(--acc);color:#fff;border:0;font-weight:600;cursor:pointer;padding:9px 14px}button.ghost{background:transparent;color:var(--mute);padding:4px 8px;font-weight:500}
+button.ghost{background:transparent;color:var(--mute);padding:4px 8px;font-weight:500}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>input{flex:1 1 110px}
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center}.stats b{display:block;font-size:22px}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;text-align:center}.stats b{display:block;font-size:22px}
 .leg{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--line)}.leg:first-of-type{border-top:0}
 .leg .r{font-weight:600}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}.tl{display:flex;justify-content:space-between;font-size:14px;padding:3px 0}
-.err{color:#e5484d;font-size:13px;min-height:18px}[hidden]{display:none!important}
+[hidden]{display:none!important}
 #map{height:320px;border-radius:12px;background:var(--line)}
+.card.highlight{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
 .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--card);color:var(--ink)}
 </style></head><body><main>
 
 <div id="auth" class="card" hidden>
-  <h1>Our Travels</h1><p class="sub">Sign in, or create an account to start a shared logbook.</p>
-  <div class="row"><input id="name" placeholder="Your name (new accounts)"><input id="email" type="email" placeholder="Email"><input id="pw" type="password" placeholder="Password (8+ characters)"></div>
-  <p class="row"><button id="login">Sign in</button><button id="register" class="ghost">Create account</button></p><div class="err" id="autherr"></div>
+  <h1>Our Travels</h1><p class="sub">Sign in to your shared logbook.</p>
+  <div class="row"><input id="email" type="email" placeholder="Email"><input id="pw" type="password" placeholder="Password"></div>
+  <p class="row"><button id="login">Sign in</button></p><div class="err" id="autherr"></div>
+  <p class="sub">New here? <a href="/register.html">Create an account</a></p>
 </div>
 
 <div id="app" hidden>
@@ -33,6 +33,7 @@ button{background:var(--acc);color:#fff;border:0;font-weight:600;cursor:pointer;
   </div>
   <div class="card row"><button id="invite">Invite partner</button><span id="code" class="sub"></span>
     <input id="joincode" placeholder="Have an invite code?" style="flex:0 1 170px"><button id="join" class="ghost">Join</button></div>
+  <div class="card highlight" id="upcomingCard" hidden><h2>Upcoming trips</h2><div id="upcoming"></div></div>
   <div class="row" style="margin-bottom:12px"><label class="sub" for="yearSel">Year</label><select id="yearSel"></select></div>
   <div class="card stats" id="stats"></div>
   <div class="card"><h2>Map</h2><div id="map"></div></div>
@@ -51,32 +52,21 @@ button{background:var(--acc);color:#fff;border:0;font-weight:600;cursor:pointer;
   </div>
 </div>
 
+<script src="/common.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const $ = id => document.getElementById(id);
 let token = localStorage.getItem('token'), lb = null, year = '', sortBy = 'date_desc', legs = [], editing = null;
-const esc = s => Object.assign(document.createElement('i'), {textContent: s ?? ''}).innerHTML;
-
-async function api(path, opts = {}) {
-  const r = await fetch('/api' + path, {...opts, headers: {...(opts.body && !(opts.body instanceof FormData) ? {'Content-Type': 'application/json'} : {}),
-    ...(token ? {Authorization: 'Bearer ' + token} : {})}});
-  if (r.status === 401 && token) { signOut(); throw new Error('Please sign in again'); }
-  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(typeof e.detail === 'string' ? e.detail : 'Something went wrong (' + r.status + ')'); }
-  return r.status === 204 ? null : r.json();
-}
-const post = (p, b) => api(p, {method: 'POST', body: JSON.stringify(b)});
+const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 
 function signOut() { token = null; localStorage.removeItem('token'); $('app').hidden = true; $('auth').hidden = false; }
-async function authenticate(kind) {
+window.onUnauthorized = signOut;
+$('login').onclick = async () => {
   $('autherr').textContent = '';
   try {
-    const body = {email: $('email').value, password: $('pw').value};
-    if (kind === 'register') body.name = $('name').value || body.email.split('@')[0];
-    token = (await post('/auth/' + kind, body)).token; localStorage.setItem('token', token); start();
+    token = (await post('/auth/login', {email: $('email').value, password: $('pw').value})).token;
+    localStorage.setItem('token', token); start();
   } catch (e) { $('autherr').textContent = e.message; }
-}
-$('login').onclick = () => authenticate('login');
-$('register').onclick = () => authenticate('register');
+};
 $('out').onclick = signOut;
 
 async function start() {
@@ -93,11 +83,22 @@ async function refresh() {
   legs = l;
   $('yearSel').innerHTML = ['', ...s.by_year.map(y => y.year).reverse()].map(y => `<option value="${y}" ${String(year) === String(y) ? 'selected' : ''}>${y || 'All'}</option>`).join('');
   const x = s.summary;
-  $('stats').innerHTML = [[x.flights, 'flights'], [x.miles.toLocaleString(), 'miles'], [x.places, 'places'], [x.countries, 'countries']].map(([n, w]) => `<div><b>${n}</b><span class="sub">${w}</span></div>`).join('');
+  $('stats').innerHTML = [[x.flights, 'flights'], [x.miles.toLocaleString(), 'miles'], [x.places, 'places'], [x.countries, 'countries'], [x.layovers, 'layovers']].map(([n, w]) => `<div><b>${n}</b><span class="sub">${w}</span></div>`).join('');
   const list = (rows, f) => rows.map(r => `<div class="tl"><span>${f(r)}</span><span class="sub">${r.flights || r.visits}×</span></div>`).join('') || '<span class="sub">None yet</span>';
   $('routes').innerHTML = list(s.top_routes, r => `${r.a} ↔ ${r.b}`); $('aps').innerHTML = list(s.top_airports, r => r.iata);
   renderLegs();
+  renderUpcoming();
   renderMap(legs);
+}
+
+function renderUpcoming() {
+  const t = today();
+  const up = legs.filter(g => g.flight_date > t).sort((a, b) => a.flight_date.localeCompare(b.flight_date));
+  $('upcomingCard').hidden = up.length === 0;
+  $('upcoming').innerHTML = up.map(g => {
+    const days = Math.round((new Date(g.flight_date) - new Date(t)) / 86400000);
+    return `<div class="tl"><span>${esc(g.origin_city)} → ${esc(g.dest_city)} <span class="sub">${g.origin}–${g.dest}</span></span><span class="sub">${g.flight_date} · in ${days}d</span></div>`;
+  }).join('');
 }
 
 const SORTS = {
@@ -106,7 +107,7 @@ const SORTS = {
   dist_desc: (a, b) => b.distance_mi - a.distance_mi,
 };
 function renderLegs() {
-  const t = new Date().toISOString().slice(0, 10);
+  const t = today();
   $('legs').innerHTML = [...legs].sort(SORTS[sortBy]).map(g => `<div class="leg"><div data-e="${g.id}" style="cursor:pointer;flex:1"><div class="r">${esc(g.origin_city)} → ${esc(g.dest_city)} <span class="sub">${g.origin}–${g.dest}</span></div>
     <div class="sub">${g.flight_date}${g.flight_number ? ' · ' + esc(g.flight_number) : ''}${g.note ? ' · ' + esc(g.note) : ''}${g.flight_date > t ? ' · upcoming' : ''}</div></div>
     <button class="ghost" data-d="${g.id}">✕</button></div>`).join('') || '<span class="sub">No flights yet. Add one above.</span>';
@@ -127,17 +128,20 @@ function renderMap(rows) {
     mapLayer = L.layerGroup().addTo(map);
   }
   mapLayer.clearLayers();
+  const t = today();
   const airports = new Map(), routes = new Map();
   for (const g of rows) {
     for (const [code, city, lat, lon] of [[g.origin, g.origin_city, g.origin_lat, g.origin_lon], [g.dest, g.dest_city, g.dest_lat, g.dest_lon]]) {
       const a = airports.get(code) || {city, lat, lon, visits: 0}; a.visits++; airports.set(code, a);
     }
     const key = [g.origin, g.dest].sort().join('-');
-    routes.set(key, (routes.get(key) || 0) + 1);
+    const r = routes.get(key) || {count: 0, upcoming: false};
+    r.count++; if (g.flight_date > t) r.upcoming = true;
+    routes.set(key, r);
   }
-  for (const [key, count] of routes) {
+  for (const [key, r] of routes) {
     const [a, b] = key.split('-').map(c => airports.get(c));
-    L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {color: '#2f6bff', weight: Math.min(1 + count, 6), opacity: 0.55}).addTo(mapLayer);
+    L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {color: r.upcoming ? '#ff9f1c' : '#2f6bff', weight: Math.min(1 + r.count, 6), opacity: 0.55}).addTo(mapLayer);
   }
   for (const [code, a] of airports) {
     L.circleMarker([a.lat, a.lon], {radius: 4 + Math.min(a.visits, 10), color: '#2f6bff', weight: 1, fillColor: '#2f6bff', fillOpacity: 0.5})

@@ -27,17 +27,35 @@ ORDER BY l.flight_date DESC, l.id DESC"""
 # "Been there" stats only count flights up to today; the year filter is optional.
 _WHERE = "logbook_id = %(lb)s AND flight_date <= CURRENT_DATE AND (%(year)s::int IS NULL OR EXTRACT(year FROM flight_date) = %(year)s)"
 
+# A leg's dest/origin is just a layover (not a real visit) when another same-day leg in the
+# logbook continues straight on from it to somewhere new -- i.e. you never actually left the
+# airport. "Somewhere new" excludes doubling back to where this leg started, so a same-day
+# round trip (BOS-CLE then CLE-BOS) isn't mistaken for a connection through CLE.
+def _layover(col, other):
+    return f"""EXISTS (SELECT 1 FROM legs l2 WHERE l2.logbook_id = legs.logbook_id
+        AND l2.flight_date = legs.flight_date AND l2.{other} = legs.{col} AND l2.{col} <> legs.{other})"""
+
+_DEST_LAYOVER = _layover("dest", "origin")
+_ORIGIN_LAYOVER = _layover("origin", "dest")
+
 STATS = {
     "summary": f"""
         SELECT COUNT(*) AS flights, COALESCE(round(SUM(distance_mi)), 0)::int AS miles,
-               COUNT(DISTINCT dest) AS places, COUNT(DISTINCT a.country) AS countries
-        FROM legs JOIN airports a ON a.iata = legs.dest WHERE {_WHERE}""",
+               COUNT(DISTINCT dest) FILTER (WHERE NOT lo.is_layover) AS places,
+               COUNT(DISTINCT a.country) FILTER (WHERE NOT lo.is_layover) AS countries,
+               COUNT(*) FILTER (WHERE lo.is_layover) AS layovers
+        FROM legs
+        JOIN airports a ON a.iata = legs.dest
+        JOIN LATERAL (SELECT {_DEST_LAYOVER} AS is_layover) lo ON true
+        WHERE {_WHERE}""",
     "top_routes": f"""
         SELECT LEAST(origin, dest) AS a, GREATEST(origin, dest) AS b, COUNT(*) AS flights
         FROM legs WHERE {_WHERE} GROUP BY 1, 2 ORDER BY flights DESC, 1, 2 LIMIT 5""",
     "top_airports": f"""
         SELECT iata, COUNT(*) AS visits FROM (
-          SELECT origin AS iata FROM legs WHERE {_WHERE} UNION ALL SELECT dest FROM legs WHERE {_WHERE}
+          SELECT origin AS iata FROM legs WHERE {_WHERE} AND NOT ({_ORIGIN_LAYOVER})
+          UNION ALL
+          SELECT dest AS iata FROM legs WHERE {_WHERE} AND NOT ({_DEST_LAYOVER})
         ) t GROUP BY iata ORDER BY visits DESC, iata LIMIT 5""",
     "by_year": f"""
         SELECT EXTRACT(year FROM flight_date)::int AS year, COUNT(*) AS flights, round(SUM(distance_mi))::int AS miles
