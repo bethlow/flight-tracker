@@ -1,11 +1,14 @@
 import re, secrets, pathlib
 from contextlib import asynccontextmanager
 from datetime import date
+import httpx
 import psycopg.errors
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from . import gcal
 from .auth import current_user, hash_password, make_token, verify_password
 from .db import get_conn, pool
 from .ics import import_events
@@ -166,6 +169,62 @@ async def import_ics(lb: int, file: UploadFile = File(...), user=Depends(current
     if len(raw) > 5_000_000:
         raise HTTPException(413, "File too large (5 MB max)")
     return import_events(conn, lb, user["id"], raw.decode("utf-8", errors="replace"))
+
+# ---------- google calendar sync ----------
+@app.get("/api/auth/google/connect-url")
+def google_connect_url(user=Depends(current_user)):
+    if not gcal.is_configured():
+        raise HTTPException(503, "Google Calendar sync isn't set up on this server")
+    return {"url": gcal.connect_url(user["id"])}
+
+@app.get("/api/auth/google/callback")
+def google_callback(code: str | None = None, state: str | None = None, error: str | None = None, conn=Depends(get_conn)):
+    uid = gcal.verify_state(state) if state else None
+    if error or not code or uid is None:
+        return RedirectResponse("/?gcal=error")
+    try:
+        tok = gcal.exchange_code(code)
+        access_token, expires_at = tok["access_token"], gcal.token_expiry(tok)
+        email = gcal.email_from_id_token(tok.get("id_token"))
+    except (httpx.HTTPError, KeyError):
+        return RedirectResponse("/?gcal=error")
+    refresh_token = tok.get("refresh_token")
+    if not refresh_token:
+        existing = conn.execute("SELECT refresh_token FROM google_tokens WHERE user_id = %s", (uid,)).fetchone()
+        refresh_token = existing["refresh_token"] if existing else None
+    if not refresh_token:
+        return RedirectResponse("/?gcal=error")
+    conn.execute("""
+        INSERT INTO google_tokens (user_id, refresh_token, access_token, expires_at, google_email)
+        VALUES (%(uid)s, %(rt)s, %(at)s, %(exp)s, %(email)s)
+        ON CONFLICT (user_id) DO UPDATE SET
+          refresh_token = %(rt)s, access_token = %(at)s, expires_at = %(exp)s, google_email = %(email)s
+        """, {"uid": uid, "rt": refresh_token, "at": access_token, "exp": expires_at, "email": email})
+    return RedirectResponse("/?gcal=connected")
+
+@app.get("/api/me/google")
+def google_status(user=Depends(current_user), conn=Depends(get_conn)):
+    row = conn.execute("SELECT google_email, last_synced_at FROM google_tokens WHERE user_id = %s", (user["id"],)).fetchone()
+    return {"connected": bool(row), "email": row["google_email"] if row else None,
+            "last_synced_at": row["last_synced_at"] if row else None}
+
+@app.delete("/api/me/google", status_code=204)
+def google_disconnect(user=Depends(current_user), conn=Depends(get_conn)):
+    row = conn.execute("DELETE FROM google_tokens WHERE user_id = %s RETURNING refresh_token", (user["id"],)).fetchone()
+    if row:
+        gcal.revoke(row["refresh_token"])
+
+@app.post("/api/logbooks/{lb}/sync-calendar")
+def sync_calendar(lb: int, user=Depends(current_user), conn=Depends(get_conn)):
+    role_in(conn, lb, user)
+    try:
+        return gcal.sync_user_calendar(conn, lb, user["id"])
+    except gcal.NotConnected:
+        raise HTTPException(409, "Connect your Google Calendar first")
+    except gcal.ReauthRequired:
+        raise HTTPException(409, "Your Google Calendar connection expired -- reconnect it")
+    except httpx.HTTPError:
+        raise HTTPException(502, "Couldn't reach Google -- try again in a bit")
 
 # ---------- misc ----------
 @app.get("/api/airports")

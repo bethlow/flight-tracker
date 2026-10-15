@@ -12,19 +12,22 @@ Once the app is running (see [Run locally](#run-locally) below) and you've opene
 4. **Accept an invite.** If someone sent you a code, paste it into "Have an invite code?" and click "Join" — you'll now share their logbook instead of your own.
 5. **Add a flight.** Fill in the origin and destination airport codes (IATA, e.g. `BOS`, `LIS`), the date, and an optional flight number/note, then "Save flight".
 6. **Or import flights in bulk.** If you have a calendar export (`.ics`) with your flights on it, use "import calendar" instead of entering them one by one. Duplicates are skipped automatically.
+   - **Or connect Google Calendar.** Under "⚙ Account", click "Connect Google Calendar", sign in with Google, and grant read-only calendar access. Click "Sync now" any time afterward to pull in new flights — same duplicate-skipping rules apply. Needs `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` set on the server (see `.env.example`), or the button shows an error when clicked.
 7. **Check your stats and map.** Totals (flights, miles, places, countries), top routes, top airports, and a map of everywhere you've flown update automatically as you add flights. Use the year chips above the stats to filter to a single year.
 8. **Edit or delete a flight.** Click any flight in the "Flights" list to edit it, or the ✕ next to it to remove it.
 
 ## Layout
 - `migrations/001_init.sql`  the schema (users, airports, logbooks, logbook_members, invites, legs). Read this first.
+- `migrations/002_google_calendar.sql`  adds `google_tokens`, one row per user who's connected their Google account.
 - `app/legs.py`      all flight SQL: insert, update, list, and the four stats queries (distance is computed inside Postgres)
 - `app/main.py`      the API routes
 - `app/auth.py`      password hashing (scrypt) and login tokens (JWT)
-- `app/ics.py`       Google Calendar (.ics) import, same rules as phase 1
+- `app/ics.py`       calendar import rules (flight parsing + de-dup), shared by the `.ics` upload and the live Google sync
+- `app/gcal.py`      Google OAuth (connect/callback, token refresh) and pulling events from the Calendar API
 - `app/migrate.py`   applies new `migrations/*.sql` files once each
 - `app/seed.py`      loads airports (and optionally your past flights)
 - `static/index.html` the web page (login, flights, stats, map, invite, import). Map tiles/markers use Leaflet, loaded from a CDN — needs internet on first load.
-- `tests/`           6 tests that run against a real Postgres
+- `tests/`           tests that run against a real Postgres
 
 ## Run locally
 
@@ -73,6 +76,9 @@ Needs Postgres and Python 3.10+ installed.
 | PATCH/DELETE | /legs/{id} | edit / remove |
 | GET | /logbooks/{id}/stats | totals, top routes, top airports, per year |
 | POST | /logbooks/{id}/import-ics | upload a calendar export |
+| GET | /auth/google/connect-url | Google OAuth URL to start a connection |
+| GET/DELETE | /me/google | connection status / disconnect |
+| POST | /logbooks/{id}/sync-calendar | pull new flights from the connected Google Calendar |
 | GET | /airports?q=lisbon | airport search |
 
 Interactive docs while it runs: /docs

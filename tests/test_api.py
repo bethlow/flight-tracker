@@ -1,3 +1,5 @@
+import httpx, jwt
+from app import gcal
 from .conftest import signup
 
 LEG = {"flight_date": "2020-03-01", "origin": "bos", "dest": "LAX", "flight_number": "B6 1187"}
@@ -94,6 +96,57 @@ def test_ics_import(client):
     assert again["added"] == 0 and again["duplicates"] == 2                               # safe to re-run
     routes = {(l["origin"], l["dest"]) for l in client.get(f"/api/logbooks/{lb}/legs", headers=h).json()}
     assert routes == {("BOS", "CLE"), ("CLE", "BOS")}
+
+def test_google_calendar_not_configured(client):
+    h, lb = signup(client, "e@example.com")
+    assert client.get("/api/auth/google/connect-url", headers=h).status_code == 503       # no GOOGLE_CLIENT_ID in test env
+    assert client.post(f"/api/logbooks/{lb}/sync-calendar", headers=h).status_code == 409 # not connected either way
+
+def test_google_calendar_callback_rejects_bad_state(client):
+    r = client.get("/api/auth/google/callback?code=abc&state=garbage", follow_redirects=False)
+    assert r.status_code in (302, 307) and r.headers["location"] == "/?gcal=error"
+    r = client.get("/api/auth/google/callback?error=access_denied", follow_redirects=False)
+    assert r.headers["location"] == "/?gcal=error"
+
+def test_google_calendar_connect_and_sync(client, monkeypatch):
+    h, lb = signup(client, "f@example.com")
+    uid = client.get("/api/me", headers=h).json()["user"]["id"]
+
+    monkeypatch.setattr(gcal, "exchange_code", lambda code: {
+        "access_token": "AT", "refresh_token": "RT", "expires_in": 3600, "id_token": None})
+    state = jwt.encode({"uid": uid, "exp": 9999999999}, "test-secret", algorithm="HS256")
+    r = client.get(f"/api/auth/google/callback?code=abc&state={state}", follow_redirects=False)
+    assert r.headers["location"] == "/?gcal=connected"
+    assert client.get("/api/me/google", headers=h).json() == {"connected": True, "email": None, "last_synced_at": None}
+
+    events = [
+        {"start": {"date": "2024-05-01"}, "summary": "Flight: B6 541 from BOS to CLE", "location": "Boston"},
+        {"start": {"dateTime": "2024-06-01T10:00:00Z"}, "summary": "Dentist"},                  # not a flight, ignored
+    ]
+    monkeypatch.setattr(gcal, "get_valid_access_token", lambda conn, user_id, row: "AT")
+    monkeypatch.setattr(gcal, "fetch_events", lambda access_token, **kw: events)
+    r = client.post(f"/api/logbooks/{lb}/sync-calendar", headers=h)
+    assert r.json() == {"added": 1, "duplicates": 0, "needs_review": []}
+    legs = client.get(f"/api/logbooks/{lb}/legs", headers=h).json()
+    assert len(legs) == 1 and (legs[0]["origin"], legs[0]["dest"]) == ("BOS", "CLE") and legs[0]["source"] == "calendar"
+    assert client.get("/api/me/google", headers=h).json()["last_synced_at"] is not None
+
+    # a reauth-needed failure (Google rejects the token) surfaces as 409 and clears the connection
+    def boom(conn, user_id, row):
+        raise httpx.HTTPStatusError("bad", request=None, response=httpx.Response(400, request=httpx.Request("GET", "https://x")))
+    monkeypatch.setattr(gcal, "get_valid_access_token", boom)
+    r = client.post(f"/api/logbooks/{lb}/sync-calendar", headers=h)
+    assert r.status_code == 409
+    assert client.get("/api/me/google", headers=h).json()["connected"] is False
+
+    assert client.delete("/api/me/google", headers=h).status_code == 204
+    assert client.get("/api/me/google", headers=h).json()["connected"] is False
+
+def test_events_to_items_handles_all_day_and_timed_events():
+    events = [{"start": {"date": "2024-05-01"}, "summary": "a", "location": "x"},
+              {"start": {"dateTime": "2024-06-02T10:00:00Z"}, "summary": "b", "location": "y"},
+              {"start": {}, "summary": "no date"}]
+    assert list(gcal.events_to_items(events)) == [("2024-05-01", "a", "x"), ("2024-06-02", "b", "y")]
 
 def test_airport_search_and_health(client):
     assert client.get("/api/health").json() == {"ok": True}

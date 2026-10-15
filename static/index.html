@@ -40,6 +40,14 @@ button.ghost{background:transparent;color:var(--mute);padding:4px 8px;font-weigh
   <div class="card" id="settingsPanel" hidden style="display:flex;flex-direction:column;gap:10px">
     <div class="row"><button id="invite">Invite partner</button><span id="code" class="sub"></span></div>
     <div class="row"><input id="joincode" placeholder="Have an invite code?" style="flex:0 1 220px"><button id="join" class="ghost">Join</button></div>
+    <div class="row" id="gcalConnect"><button id="gcalConnectBtn">Connect Google Calendar</button></div>
+    <div id="gcalConnected" hidden>
+      <div class="row" style="justify-content:space-between">
+        <span class="sub" id="gcalInfo"></span>
+        <span class="row" style="gap:8px"><button class="ghost" id="gcalSync">Sync now</button><button class="ghost" id="gcalDisconnect">Disconnect</button></span>
+      </div>
+    </div>
+    <div class="sub" id="gcalMsg"></div>
     <div class="row" style="justify-content:flex-end"><button class="ghost" id="out">Sign out</button></div>
   </div>
   <div class="card highlight" id="upcomingCard" hidden><h2>Upcoming trips</h2><div id="upcoming"></div></div>
@@ -80,6 +88,29 @@ $('loginForm').onsubmit = async e => {
 $('out').onclick = signOut;
 $('settingsToggle').onclick = () => { $('settingsPanel').hidden = !$('settingsPanel').hidden; };
 
+async function refreshGoogleStatus() {
+  const s = await api('/me/google');
+  $('gcalConnect').hidden = s.connected;
+  $('gcalConnected').hidden = !s.connected;
+  if (s.connected) {
+    const synced = s.last_synced_at ? 'last synced ' + new Date(s.last_synced_at).toLocaleString() : 'not synced yet';
+    $('gcalInfo').textContent = `Connected as ${s.email || 'Google'} (${synced})`;
+  }
+}
+$('gcalConnectBtn').onclick = async () => {
+  try { location.href = (await api('/auth/google/connect-url')).url; } catch (e) { $('gcalMsg').textContent = e.message; }
+};
+$('gcalSync').onclick = async () => {
+  $('gcalSync').disabled = true; $('gcalMsg').textContent = 'Syncing…';
+  try {
+    const r = await post(`/logbooks/${lb}/sync-calendar`, {});
+    $('gcalMsg').textContent = `Added ${r.added} flights (${r.duplicates} already there)` + (r.needs_review.length ? `; ${r.needs_review.length} need a look` : '');
+    refreshGoogleStatus(); refresh();
+  } catch (e) { $('gcalMsg').textContent = e.message; }
+  $('gcalSync').disabled = false;
+};
+$('gcalDisconnect').onclick = async () => { await api('/me/google', {method: 'DELETE'}); $('gcalMsg').textContent = ''; refreshGoogleStatus(); };
+
 async function start(preferLb) {
   $('auth').hidden = true; $('app').hidden = false;
   const me = await api('/me');
@@ -93,6 +124,7 @@ async function start(preferLb) {
   $('title').textContent = book.name;
   $('members').textContent = book.members.map(m => m.name).join(' & ');
   $('invite').hidden = book.role !== 'owner';
+  refreshGoogleStatus();
   refresh();
 }
 $('lbSel').onchange = () => start($('lbSel').value);
@@ -208,5 +240,10 @@ $('invite').onclick = async () => { const r = await post(`/logbooks/${lb}/invite
 $('join').onclick = async () => {
   try { const r = await post(`/invites/${$('joincode').value.trim()}/accept`, {}); start(r.logbook_id); } catch (e) { alert(e.message); }
 };
-token ? start().catch(() => signOut()) : signOut();
+const gcalParam = new URLSearchParams(location.search).get('gcal');
+if (gcalParam) history.replaceState({}, '', location.pathname);
+token ? start().then(() => {
+  if (gcalParam === 'connected') { $('settingsPanel').hidden = false; $('gcalMsg').textContent = 'Connected! Click "Sync now" to pull in your flights.'; }
+  else if (gcalParam === 'error') { $('settingsPanel').hidden = false; $('gcalMsg').textContent = "Couldn't connect to Google — try again."; }
+}).catch(() => signOut()) : signOut();
 </script></main></body></html>
