@@ -18,6 +18,7 @@ WHERE id = %(id)s RETURNING id"""
 
 LIST_LEGS = """
 SELECT l.id, l.flight_date, l.origin, l.dest, o.city AS origin_city, d.city AS dest_city,
+       o.lat AS origin_lat, o.lon AS origin_lon, d.lat AS dest_lat, d.lon AS dest_lon,
        l.flight_number, l.note, l.distance_mi, l.source
 FROM legs l JOIN airports o ON o.iata = l.origin JOIN airports d ON d.iata = l.dest
 WHERE l.logbook_id = %(lb)s AND (%(year)s::int IS NULL OR EXTRACT(year FROM l.flight_date) = %(year)s)

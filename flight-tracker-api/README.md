@@ -2,6 +2,19 @@
 
 FastAPI + Postgres. You and your partner share one logbook. Everything is plain SQL (no ORM) so you can read exactly what runs.
 
+## Using the dashboard
+
+Once the app is running (see [Run locally](#run-locally) below) and you've opened it in a browser:
+
+1. **Create an account.** Enter your name, email, and a password (8+ characters), then click "Create account". This also creates your own logbook — the shared trip log you and a partner will add flights to.
+2. **Sign in next time** with just your email and password.
+3. **Invite your partner.** Click "Invite partner" to generate a code that's valid for 7 days, then send it to them however you like (text, email, etc).
+4. **Accept an invite.** If someone sent you a code, paste it into "Have an invite code?" and click "Join" — you'll now share their logbook instead of your own.
+5. **Add a flight.** Fill in the origin and destination airport codes (IATA, e.g. `BOS`, `LIS`), the date, and an optional flight number/note, then "Save flight".
+6. **Or import flights in bulk.** If you have a calendar export (`.ics`) with your flights on it, use "import calendar" instead of entering them one by one. Duplicates are skipped automatically.
+7. **Check your stats and map.** Totals (flights, miles, places, countries), top routes, top airports, and a map of everywhere you've flown update automatically as you add flights. Use the year chips above the stats to filter to a single year.
+8. **Edit or delete a flight.** Click any flight in the "Flights" list to edit it, or the ✕ next to it to remove it.
+
 ## Layout
 - `migrations/001_init.sql`  the schema (users, airports, logbooks, logbook_members, invites, legs). Read this first.
 - `app/legs.py`      all flight SQL: insert, update, list, and the four stats queries (distance is computed inside Postgres)
@@ -10,19 +23,44 @@ FastAPI + Postgres. You and your partner share one logbook. Everything is plain 
 - `app/ics.py`       Google Calendar (.ics) import, same rules as phase 1
 - `app/migrate.py`   applies new `migrations/*.sql` files once each
 - `app/seed.py`      loads airports (and optionally your past flights)
-- `static/index.html` the web page (login, flights, stats, invite, import)
+- `static/index.html` the web page (login, flights, stats, map, invite, import). Map tiles/markers use Leaflet, loaded from a CDN — needs internet on first load.
 - `tests/`           6 tests that run against a real Postgres
 
 ## Run locally
-    createdb flights                       # needs Postgres installed; or use any Postgres URL
-    cp .env.example .env                   # then edit DATABASE_URL / JWT_SECRET
-    pip install -r requirements.txt
-    export $(grep -v '^#' .env | xargs)    # or just: export APP_ENV=dev DATABASE_URL=...
-    python -m app.migrate && python -m app.seed
-    uvicorn app.main:app --reload          # open http://localhost:8000
-    # after you register in the page, load your 119 past flights:
-    python -m app.seed --legs data/legs.json --email you@example.com
-    python -m pytest                       # needs a Postgres user "app" that can create databases; see tests/conftest.py
+
+Needs Postgres and Python 3.10+ installed.
+
+1. Create the database:
+
+       createdb flights                       # or point DATABASE_URL at any Postgres you have
+
+2. Set up your environment file:
+
+       cp .env.example .env                   # then edit DATABASE_URL / JWT_SECRET to match your setup
+
+3. Install dependencies (a virtualenv is recommended):
+
+       python3 -m venv .venv && source .venv/bin/activate
+       pip install -r requirements.txt
+
+4. Load the environment, then set up the database schema and reference data (airports):
+
+       export $(grep -v '^#' .env | xargs)    # or just: export APP_ENV=dev DATABASE_URL=...
+       python -m app.migrate && python -m app.seed
+
+5. Start the server:
+
+       uvicorn app.main:app --reload          # open http://localhost:8000
+
+   From here, follow [Using the dashboard](#using-the-dashboard) above to create an account.
+
+6. Optional: once you've registered, load your own past flights from a JSON file:
+
+       python -m app.seed --legs data/legs.json --email you@example.com
+
+7. Run the tests (needs a Postgres user named "app" that can create databases — see `tests/conftest.py`):
+
+       python -m pytest
 
 ## API (all under /api; JSON; send `Authorization: Bearer <token>`)
 | Method | Path | What |
@@ -46,6 +84,5 @@ Interactive docs while it runs: /docs
 - Turn the route stats into a database VIEW.
 
 ## Known gaps (on purpose, for later)
-- The map dashboard isn't ported into `static/index.html` yet (phase 2b).
 - No login rate-limiting, password reset, or email verification.
 - The login token lives in the browser's localStorage: fine for a personal app, not for anything sensitive.

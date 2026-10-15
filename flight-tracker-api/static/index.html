@@ -2,6 +2,7 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Our Travels</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 :root{--bg:#f4f6fa;--card:#fff;--ink:#12151c;--mute:#6b7385;--line:#e3e7ef;--acc:#2f6bff}
 @media(prefers-color-scheme:dark){:root{--bg:#0b0e14;--card:#151a24;--ink:#f1f4fa;--mute:#8b94a8;--line:#232a38;--acc:#5b8cff}}
@@ -17,6 +18,8 @@ button{background:var(--acc);color:#fff;border:0;font-weight:600;cursor:pointer;
 .leg .r{font-weight:600}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}.tl{display:flex;justify-content:space-between;font-size:14px;padding:3px 0}
 .chips{display:flex;gap:6px;overflow-x:auto;margin-bottom:12px}.chip{background:var(--card);color:var(--mute);border:1px solid var(--line);border-radius:99px;padding:6px 12px;white-space:nowrap}.chip.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 .err{color:#e5484d;font-size:13px;min-height:18px}[hidden]{display:none!important}
+#map{height:320px;border-radius:12px;background:var(--line)}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--card);color:var(--ink)}
 </style></head><body><main>
 
 <div id="auth" class="card" hidden>
@@ -33,6 +36,7 @@ button{background:var(--acc);color:#fff;border:0;font-weight:600;cursor:pointer;
     <input id="joincode" placeholder="Have an invite code?" style="flex:0 1 170px"><button id="join" class="ghost">Join</button></div>
   <div class="chips" id="chips"></div>
   <div class="card stats" id="stats"></div>
+  <div class="card"><h2>Map</h2><div id="map"></div></div>
   <div class="card two"><div><h2>Top routes</h2><div id="routes"></div></div><div><h2>Top airports</h2><div id="aps"></div></div></div>
   <form class="card" id="f"><h2 id="fh">Add a flight</h2>
     <div class="row"><input id="from" placeholder="From (BOS)" maxlength="3" required><input id="to" placeholder="To (LIS)" maxlength="3" required>
@@ -43,6 +47,7 @@ button{background:var(--acc);color:#fff;border:0;font-weight:600;cursor:pointer;
   <div class="card"><h2>Flights</h2><div id="legs"></div></div>
 </div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let token = localStorage.getItem('token'), lb = null, year = '', legs = [], editing = null;
@@ -90,6 +95,36 @@ async function refresh() {
   $('legs').innerHTML = legs.map(g => `<div class="leg"><div data-e="${g.id}" style="cursor:pointer;flex:1"><div class="r">${esc(g.origin_city)} → ${esc(g.dest_city)} <span class="sub">${g.origin}–${g.dest}</span></div>
     <div class="sub">${g.flight_date}${g.flight_number ? ' · ' + esc(g.flight_number) : ''}${g.note ? ' · ' + esc(g.note) : ''}${g.flight_date > t ? ' · upcoming' : ''}</div></div>
     <button class="ghost" data-d="${g.id}">✕</button></div>`).join('') || '<span class="sub">No flights yet. Add one above.</span>';
+  renderMap(legs);
+}
+
+let map, mapLayer;
+function renderMap(rows) {
+  if (!map) {
+    map = L.map('map', {scrollWheelZoom: false});
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      {attribution: '© OpenStreetMap contributors', maxZoom: 18}).addTo(map);
+    mapLayer = L.layerGroup().addTo(map);
+  }
+  mapLayer.clearLayers();
+  const airports = new Map(), routes = new Map();
+  for (const g of rows) {
+    for (const [code, city, lat, lon] of [[g.origin, g.origin_city, g.origin_lat, g.origin_lon], [g.dest, g.dest_city, g.dest_lat, g.dest_lon]]) {
+      const a = airports.get(code) || {city, lat, lon, visits: 0}; a.visits++; airports.set(code, a);
+    }
+    const key = [g.origin, g.dest].sort().join('-');
+    routes.set(key, (routes.get(key) || 0) + 1);
+  }
+  for (const [key, count] of routes) {
+    const [a, b] = key.split('-').map(c => airports.get(c));
+    L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {color: '#2f6bff', weight: Math.min(1 + count, 6), opacity: 0.55}).addTo(mapLayer);
+  }
+  for (const [code, a] of airports) {
+    L.circleMarker([a.lat, a.lon], {radius: 4 + Math.min(a.visits, 10), color: '#2f6bff', weight: 1, fillColor: '#2f6bff', fillOpacity: 0.5})
+      .bindPopup(`<b>${esc(code)}</b> · ${esc(a.city)} · ${a.visits}×`).addTo(mapLayer);
+  }
+  if (airports.size) map.fitBounds([...airports.values()].map(a => [a.lat, a.lon]), {padding: [24, 24]});
+  else map.setView([20, 0], 2);
 }
 document.addEventListener('click', async e => {
   const d = e.target.dataset; if (!d) return;
