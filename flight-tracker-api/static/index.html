@@ -10,13 +10,12 @@
 main{max-width:760px;margin:0 auto;padding:18px 16px 40px}
 h1{font-size:24px;margin:0}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute);margin:0 0 8px}
 .sub{color:var(--mute);font-size:13px}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:14px}
-input,button{font:inherit;border-radius:10px;border:1px solid var(--line);padding:9px;background:var(--bg);color:var(--ink);min-width:0}
+input,button,select{font:inherit;border-radius:10px;border:1px solid var(--line);padding:9px;background:var(--bg);color:var(--ink);min-width:0}
 button{background:var(--acc);color:#fff;border:0;font-weight:600;cursor:pointer;padding:9px 14px}button.ghost{background:transparent;color:var(--mute);padding:4px 8px;font-weight:500}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>input{flex:1 1 110px}
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center}.stats b{display:block;font-size:22px}
 .leg{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--line)}.leg:first-of-type{border-top:0}
 .leg .r{font-weight:600}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}.tl{display:flex;justify-content:space-between;font-size:14px;padding:3px 0}
-.chips{display:flex;gap:6px;overflow-x:auto;margin-bottom:12px}.chip{background:var(--card);color:var(--mute);border:1px solid var(--line);border-radius:99px;padding:6px 12px;white-space:nowrap}.chip.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 .err{color:#e5484d;font-size:13px;min-height:18px}[hidden]{display:none!important}
 #map{height:320px;border-radius:12px;background:var(--line)}
 .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--card);color:var(--ink)}
@@ -34,7 +33,7 @@ button{background:var(--acc);color:#fff;border:0;font-weight:600;cursor:pointer;
   </div>
   <div class="card row"><button id="invite">Invite partner</button><span id="code" class="sub"></span>
     <input id="joincode" placeholder="Have an invite code?" style="flex:0 1 170px"><button id="join" class="ghost">Join</button></div>
-  <div class="chips" id="chips"></div>
+  <div class="row" style="margin-bottom:12px"><label class="sub" for="yearSel">Year</label><select id="yearSel"></select></div>
   <div class="card stats" id="stats"></div>
   <div class="card"><h2>Map</h2><div id="map"></div></div>
   <div class="card two"><div><h2>Top routes</h2><div id="routes"></div></div><div><h2>Top airports</h2><div id="aps"></div></div></div>
@@ -44,13 +43,18 @@ button{background:var(--acc);color:#fff;border:0;font-weight:600;cursor:pointer;
     <p class="row"><button id="go">Save flight</button><button type="button" class="ghost" id="cancel" hidden>Cancel edit</button>
     <label class="sub">or import calendar (.ics): <input type="file" id="ics" accept=".ics"></label></p><div class="err" id="ferr"></div>
   </form>
-  <div class="card"><h2>Flights</h2><div id="legs"></div></div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">Flights</h2>
+      <div class="row" style="gap:8px"><select id="sortSel"><option value="date_desc">Newest first</option><option value="date_asc">Oldest first</option><option value="dist_desc">Longest first</option></select>
+      <button type="button" class="ghost" id="toggleLegs">Hide</button></div></div>
+    <div id="legs"></div>
+  </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-let token = localStorage.getItem('token'), lb = null, year = '', legs = [], editing = null;
+let token = localStorage.getItem('token'), lb = null, year = '', sortBy = 'date_desc', legs = [], editing = null;
 const esc = s => Object.assign(document.createElement('i'), {textContent: s ?? ''}).innerHTML;
 
 async function api(path, opts = {}) {
@@ -86,17 +90,33 @@ async function start() {
 async function refresh() {
   const q = year ? '?year=' + year : '';
   const [s, l] = await Promise.all([api(`/logbooks/${lb}/stats${q}`), api(`/logbooks/${lb}/legs${q}`)]);
-  legs = l; const t = new Date().toISOString().slice(0, 10);
-  $('chips').innerHTML = ['', ...s.by_year.map(y => y.year).reverse()].map(y => `<button class="chip ${String(year) === String(y) ? 'on' : ''}" data-y="${y}">${y || 'All'}</button>`).join('');
+  legs = l;
+  $('yearSel').innerHTML = ['', ...s.by_year.map(y => y.year).reverse()].map(y => `<option value="${y}" ${String(year) === String(y) ? 'selected' : ''}>${y || 'All'}</option>`).join('');
   const x = s.summary;
   $('stats').innerHTML = [[x.flights, 'flights'], [x.miles.toLocaleString(), 'miles'], [x.places, 'places'], [x.countries, 'countries']].map(([n, w]) => `<div><b>${n}</b><span class="sub">${w}</span></div>`).join('');
   const list = (rows, f) => rows.map(r => `<div class="tl"><span>${f(r)}</span><span class="sub">${r.flights || r.visits}×</span></div>`).join('') || '<span class="sub">None yet</span>';
   $('routes').innerHTML = list(s.top_routes, r => `${r.a} ↔ ${r.b}`); $('aps').innerHTML = list(s.top_airports, r => r.iata);
-  $('legs').innerHTML = legs.map(g => `<div class="leg"><div data-e="${g.id}" style="cursor:pointer;flex:1"><div class="r">${esc(g.origin_city)} → ${esc(g.dest_city)} <span class="sub">${g.origin}–${g.dest}</span></div>
-    <div class="sub">${g.flight_date}${g.flight_number ? ' · ' + esc(g.flight_number) : ''}${g.note ? ' · ' + esc(g.note) : ''}${g.flight_date > t ? ' · upcoming' : ''}</div></div>
-    <button class="ghost" data-d="${g.id}">✕</button></div>`).join('') || '<span class="sub">No flights yet. Add one above.</span>';
+  renderLegs();
   renderMap(legs);
 }
+
+const SORTS = {
+  date_desc: (a, b) => b.flight_date.localeCompare(a.flight_date) || b.id - a.id,
+  date_asc: (a, b) => a.flight_date.localeCompare(b.flight_date) || a.id - b.id,
+  dist_desc: (a, b) => b.distance_mi - a.distance_mi,
+};
+function renderLegs() {
+  const t = new Date().toISOString().slice(0, 10);
+  $('legs').innerHTML = [...legs].sort(SORTS[sortBy]).map(g => `<div class="leg"><div data-e="${g.id}" style="cursor:pointer;flex:1"><div class="r">${esc(g.origin_city)} → ${esc(g.dest_city)} <span class="sub">${g.origin}–${g.dest}</span></div>
+    <div class="sub">${g.flight_date}${g.flight_number ? ' · ' + esc(g.flight_number) : ''}${g.note ? ' · ' + esc(g.note) : ''}${g.flight_date > t ? ' · upcoming' : ''}</div></div>
+    <button class="ghost" data-d="${g.id}">✕</button></div>`).join('') || '<span class="sub">No flights yet. Add one above.</span>';
+}
+$('yearSel').onchange = () => { year = $('yearSel').value; refresh(); };
+$('sortSel').onchange = () => { sortBy = $('sortSel').value; renderLegs(); };
+$('toggleLegs').onclick = () => {
+  $('legs').hidden = !$('legs').hidden;
+  $('toggleLegs').textContent = $('legs').hidden ? 'Show' : 'Hide';
+};
 
 let map, mapLayer;
 function renderMap(rows) {
@@ -129,8 +149,14 @@ function renderMap(rows) {
 document.addEventListener('click', async e => {
   const d = e.target.dataset; if (!d) return;
   try {
-    if (d.y !== undefined) { year = d.y; refresh(); }
-    if (d.d && confirm('Delete this flight?')) { await api('/legs/' + d.d, {method: 'DELETE'}); refresh(); }
+    if (d.d) {
+      if (d.armed) { await api('/legs/' + d.d, {method: 'DELETE'}); refresh(); }
+      else {
+        d.armed = '1'; e.target.textContent = 'Delete?'; e.target.style.color = '#e5484d';
+        clearTimeout(e.target._disarm);
+        e.target._disarm = setTimeout(() => { delete d.armed; e.target.textContent = '✕'; e.target.style.color = ''; }, 3000);
+      }
+    }
   } catch (err) { alert(err.message); }
   const row = e.target.closest('[data-e]');
   if (row) { editing = legs.find(g => g.id == row.dataset.e); $('from').value = editing.origin; $('to').value = editing.dest; $('date').value = editing.flight_date;
