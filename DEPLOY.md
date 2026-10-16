@@ -18,6 +18,9 @@ Free tiers and menus change, so check each site for current limits and screens. 
 2. Environment variables:
    - `DATABASE_URL` = the Neon string
    - `JWT_SECRET`   = output of `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`
+   - Optional, for Google Calendar sync: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and
+     `GOOGLE_REDIRECT_URI` = `https://<your-service>.onrender.com/api/auth/google/callback`
+     (add that same URL to the OAuth client's "Authorized redirect URIs" in Google Cloud Console).
 3. Health check path: `/api/health`.
 4. Deploy. On each start the container runs `python -m app.migrate` (creates tables), `python -m app.seed` (loads airports), then the server.
 5. Open your `*.onrender.com` URL, create your account, and invite your partner from the page.

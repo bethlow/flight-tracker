@@ -41,7 +41,11 @@ def city_to_iata(conn, city, lb):
     return seen[0] if len(seen) == 1 else None
 
 def import_events(conn, lb, uid, text):
-    events = sorted(parse_events(text), key=lambda e: not any(p.search(e[1]) for p in PATTERNS))  # explicit ones first
+    return import_items(conn, lb, uid, parse_events(text))
+
+def import_items(conn, lb, uid, items):
+    """Same import rules, for events from any source (.ics text or the Google Calendar API)."""
+    events = sorted(items, key=lambda e: not any(p.search(e[1]) for p in PATTERNS))  # explicit ones first
     added = dup = 0
     review = []
     for date, summary, loc in events:
