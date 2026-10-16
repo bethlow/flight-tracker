@@ -15,7 +15,7 @@ from .ics import import_items
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
-EVENTS_URL = "https://www.googleapis.com/calendar/v3/events"
+EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 SCOPE = "https://www.googleapis.com/auth/calendar.readonly openid email"
 HISTORY_FLOOR = "1990-01-01T00:00:00Z"   # "as far back as possible" -- Calendar API needs some lower bound
 RESYNC_OVERLAP = timedelta(days=7)       # re-check the last week on every sync, in case an old event got edited
@@ -95,8 +95,7 @@ def get_valid_access_token(conn, user_id, row):
 def fetch_events(access_token, time_min=HISTORY_FLOOR):
     events, page_token = [], None
     while True:
-        params = {"calendarId": "primary", "singleEvents": "true", "maxResults": 2500,
-                   "timeMin": time_min, "orderBy": "startTime"}
+        params = {"singleEvents": "true", "maxResults": 2500, "timeMin": time_min, "orderBy": "startTime"}
         if page_token:
             params["pageToken"] = page_token
         r = httpx.get(EVENTS_URL, params=params, headers={"Authorization": f"Bearer {access_token}"}, timeout=30)
