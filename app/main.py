@@ -223,7 +223,11 @@ def sync_calendar(lb: int, user=Depends(current_user), conn=Depends(get_conn)):
         raise HTTPException(409, "Connect your Google Calendar first")
     except gcal.ReauthRequired:
         raise HTTPException(409, "Your Google Calendar connection expired -- reconnect it")
-    except httpx.HTTPError:
+    except httpx.HTTPStatusError as e:
+        print(f"Google Calendar sync failed: {e.response.status_code} {e.response.text}")
+        raise HTTPException(502, "Couldn't reach Google -- try again in a bit")
+    except httpx.HTTPError as e:
+        print(f"Google Calendar sync failed: {e!r}")
         raise HTTPException(502, "Couldn't reach Google -- try again in a bit")
 
 # ---------- misc ----------
